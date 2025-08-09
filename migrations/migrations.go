@@ -16,7 +16,7 @@ func RunMigrations(cfg *config.Config, logger *slog.Logger) error {
 	)
 
 	m, err := migrate.New(
-		"file://internal/migrations",
+		"file://migrations",
 		ps,
 	)
 	if err != nil {

@@ -8,9 +8,9 @@ import (
 	"os"
 	"subscription/config"
 	"subscription/internal/handler"
-	migrations "subscription/internal/migrations"
 	"subscription/internal/repository/postgres"
 	"subscription/internal/service"
+	migrations "subscription/migrations"
 	"time"
 
 	"github.com/go-chi/chi/v5"
