@@ -25,7 +25,7 @@ Go, Chi, PostgreSQL, golang-migrate, slog, http-swagger, Docker/Compose.
 ## Быстрый старт
 ```bash
 git clone <repo-url>
-cd subscription
+cd subscription_test
 docker-compose up --build
 ```
 
