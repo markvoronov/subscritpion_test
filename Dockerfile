@@ -3,34 +3,32 @@ FROM golang:1.23-alpine AS builder
 
 WORKDIR /subscription/
 
-# Cache deps
+# Кеш
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy source
+# Исходники
 COPY . .
 
 # Build static binary
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /subscription_server ./cmd/main.go
 
 # ---- Runtime ----
-FROM alpine:latest
+FROM alpine:3.20
 
 WORKDIR /home/app
 
-# Select which env file to bake in (default .env)
-ARG CONFIG_FILE=.env
-
-# Copy binary and chosen env file
+# Бинарь
 COPY --from=builder /subscription_server .
-COPY ${CONFIG_FILE} .env
 
-# Copy migrations (now at repo root) into runtime image
-# If you keep migrations at /internal/migrations, change the source path accordingly.
-COPY --from=builder /subscription/migrations ./migrations
+# Миграции
+COPY migrations ./migrations
 
 # Копируем Swagger-документацию
-COPY --from=builder /subscription/docs ./docs
+COPY docs ./docs
+
+ARG CONFIG_FILE=./config/config.yaml
+COPY ${CONFIG_FILE} ./config/config.yaml
 
 EXPOSE 8080
 CMD ["/home/app/subscription_server"]

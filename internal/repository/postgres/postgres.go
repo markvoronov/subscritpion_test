@@ -3,10 +3,11 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"strings"
-	"subscription/config"
+	"subscription/internal/config"
 	"subscription/internal/model"
 	"time"
 )
@@ -18,19 +19,30 @@ type Storage struct {
 func NewPostgresDB(cfg *config.Config) (*Storage, error) {
 
 	ps := fmt.Sprintf("host=%s port=%s dbname=%s user=%s password=%s sslmode=%s",
-		cfg.DBHost, cfg.DBPort, cfg.DBName, cfg.DBUser, cfg.DBPassword, cfg.DBSSLMode)
+		cfg.Database.Host, cfg.Database.Port, cfg.Database.Name, cfg.Database.User, cfg.Database.Password, cfg.Database.SSLMode)
 
 	db, err := sql.Open("pgx", ps)
-
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("sql.Open: %w", err)
 	}
 
-	s := &Storage{db: db}
+	// Устанавливаем таймауты
+	// ConnLifetime задаётся в секундах в конфиге
+	db.SetConnMaxLifetime(cfg.Database.Pool.ConnLifetime)
+	db.SetMaxOpenConns(cfg.Database.Pool.MaxOpenConns)
+	db.SetMaxIdleConns(cfg.Database.Pool.MaxIdleConns)
 
-	if err := s.Ping(context.Background()); err != nil {
-		db.Close()      // НЕ забываем закрыть открытое соединение
-		return nil, err // и возвращаем ошибку дальше
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	s := &Storage{db: db}
+	if err := s.Ping(ctx); err != nil {
+		// Не забываем закрыть открытое соединение
+		if cerr := db.Close(); cerr != nil {
+			return nil, errors.Join(err, cerr)
+		}
+
+		return nil, err
 	}
 
 	return s, nil
@@ -50,35 +62,36 @@ func (s *Storage) Ping(ctx context.Context) error {
 	return nil
 }
 
-func (r *Storage) CreateSubscription(ctx context.Context, s model.Subscription) (model.Subscription, error) {
+func (s *Storage) CreateSubscription(ctx context.Context, sub model.Subscription) (model.Subscription, error) {
 	query := `
         INSERT INTO subscriptions (service_name, price, user_id, start_date, end_date)
         VALUES ($1, $2, $3, $4, $5) RETURNING id
     `
-	return s, r.db.QueryRowContext(ctx, query, s.ServiceName, s.Price, s.UserID, s.StartDate, s.EndDate).
-		Scan(&s.ID)
+	return sub, s.db.QueryRowContext(ctx, query, sub.ServiceName, sub.Price, sub.UserID, sub.StartDate, sub.EndDate).
+		Scan(&sub.ID)
 }
-func (r *Storage) GetSubscription(ctx context.Context, id int) (model.Subscription, error) {
+
+func (s *Storage) GetSubscription(ctx context.Context, id int) (model.Subscription, error) {
 	query := `
         SELECT id, service_name, price, user_id, start_date, end_date
         FROM subscriptions
         WHERE id = $1
     `
-	var s model.Subscription
+	var sub model.Subscription
 	var endDate sql.NullTime
-	row := r.db.QueryRowContext(ctx, query, id)
-	err := row.Scan(&s.ID, &s.ServiceName, &s.Price, &s.UserID, &s.StartDate, &endDate)
+	row := s.db.QueryRowContext(ctx, query, id)
+	err := row.Scan(&sub.ID, &sub.ServiceName, &sub.Price, &sub.UserID, &sub.StartDate, &endDate)
 	if err != nil {
-		return s, err
+		return sub, err
 	}
 	if endDate.Valid {
-		s.EndDate = &endDate.Time
+		sub.EndDate = &endDate.Time
 	}
-	return s, nil
+	return sub, nil
 }
 
 // ListSubscriptions Архитектурно правильно было бы делать пагинацию
-func (r *Storage) ListSubscriptions(ctx context.Context, userID, serviceName string) ([]*model.Subscription, error) {
+func (s *Storage) ListSubscriptions(ctx context.Context, userID, serviceName string) ([]*model.Subscription, error) {
 	var where []string
 	var args []interface{}
 	idx := 1
@@ -103,44 +116,59 @@ func (r *Storage) ListSubscriptions(ctx context.Context, userID, serviceName str
 	}
 	query += " ORDER BY id"
 
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+
+	// Будем аккумулировать ошибку закрытия в именованном ретёрне.
+	var retErr error
+	defer func() {
+		if cerr := rows.Close(); cerr != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("rows.Close: %w", cerr))
+		}
+	}()
 
 	var subs []*model.Subscription
 	for rows.Next() {
 		var s model.Subscription
 		var endDate sql.NullTime
+
 		if err := rows.Scan(&s.ID, &s.ServiceName, &s.Price, &s.UserID, &s.StartDate, &endDate); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("scan: %w", err)
 		}
 		if endDate.Valid {
 			s.EndDate = &endDate.Time
 		}
 		subs = append(subs, &s)
 	}
-	return subs, nil
+
+	// Обязательная проверка ошибок итератора (в т.ч. контекстных).
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
+
+	// Если была только ошибка Close — вернём её отдельно.
+	return subs, retErr
 }
 
-func (r *Storage) UpdateSubscription(ctx context.Context, s model.Subscription) error {
+func (s *Storage) UpdateSubscription(ctx context.Context, sub model.Subscription) error {
 	query := `
         UPDATE subscriptions
         SET service_name = $1, price = $2, user_id = $3, start_date = $4, end_date = $5
         WHERE id = $6
     `
-	_, err := r.db.ExecContext(ctx, query, s.ServiceName, s.Price, s.UserID, s.StartDate, s.EndDate, s.ID)
+	_, err := s.db.ExecContext(ctx, query, sub.ServiceName, sub.Price, sub.UserID, sub.StartDate, sub.EndDate, sub.ID)
 	return err
 }
 
-func (r *Storage) DeleteSubscription(ctx context.Context, id int) error {
+func (s *Storage) DeleteSubscription(ctx context.Context, id int) error {
 	query := `DELETE FROM subscriptions WHERE id = $1`
-	_, err := r.db.ExecContext(ctx, query, id)
+	_, err := s.db.ExecContext(ctx, query, id)
 	return err
 }
 
-func (r *Storage) Sum(ctx context.Context, userID, serviceName string, startPeriod, endPeriod time.Time) (int, error) {
+func (s *Storage) Sum(ctx context.Context, userID, serviceName string, startPeriod, endPeriod time.Time) (int, error) {
 	var where []string
 	var args []interface{}
 	idx := 1
@@ -173,6 +201,10 @@ func (r *Storage) Sum(ctx context.Context, userID, serviceName string, startPeri
 	}
 
 	var sum int
-	err := r.db.QueryRowContext(ctx, query, args...).Scan(&sum)
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(&sum)
 	return sum, err
+}
+
+func (s *Storage) Close() error {
+	return s.db.Close()
 }

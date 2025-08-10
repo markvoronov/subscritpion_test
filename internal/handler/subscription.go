@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -10,15 +11,28 @@ import (
 	"strconv"
 	"subscription/internal/model"
 	"subscription/internal/service"
+
 	"time"
 )
 
+// SubscriptionService — контракт СЕРВИСА для хендлеров.
+// Его будет реализовывать service.SubscriptionSvc.
+type SubscriptionService interface {
+	CreateSubscription(ctx context.Context, sub model.Subscription) (model.Subscription, error)
+	GetSubscription(ctx context.Context, id int) (model.Subscription, error)
+	ListSubscriptions(ctx context.Context, userID, serviceName string) ([]*model.Subscription, error)
+	UpdateSubscription(ctx context.Context, sub model.Subscription) error
+	DeleteSubscription(ctx context.Context, id int) error
+	Sum(ctx context.Context, userID, serviceName string, startPeriod, endPeriod time.Time) (int, error)
+	Ping(ctx context.Context) error
+}
+
 type Handler struct {
-	services *service.SubscriptionSvc
+	services SubscriptionService
 	log      *slog.Logger
 }
 
-func NewHandler(services *service.SubscriptionSvc, log *slog.Logger) *Handler {
+func NewHandler(services SubscriptionService, log *slog.Logger) *Handler {
 	return &Handler{services: services, log: log}
 }
 
@@ -33,14 +47,14 @@ func (h *Handler) CreateSubscription(w http.ResponseWriter, r *http.Request) {
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.log.Error("invalid request", "err", err)
-		http.Error(w, "invalid request", http.StatusBadRequest)
+		h.writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
 
 	startDate, err := time.Parse("01-2006", req.StartDate)
 	if err != nil {
 		h.log.Error("invalid start_date", "err", err)
-		http.Error(w, "invalid start_date format", http.StatusBadRequest)
+		h.writeError(w, http.StatusBadRequest, "invalid start_date format")
 		return
 	}
 
@@ -68,8 +82,9 @@ func (h *Handler) CreateSubscription(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not create subscription", http.StatusInternalServerError)
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(s)
+
+	h.writeJSON(w, http.StatusCreated, s)
+
 }
 
 func (h *Handler) GetSubscription(w http.ResponseWriter, r *http.Request) {
@@ -91,7 +106,9 @@ func (h *Handler) GetSubscription(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	json.NewEncoder(w).Encode(sub)
+
+	h.writeJSON(w, http.StatusCreated, sub)
+
 }
 
 func (h *Handler) ListSubscriptions(w http.ResponseWriter, r *http.Request) {
@@ -105,7 +122,9 @@ func (h *Handler) ListSubscriptions(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "server error", http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(subs)
+
+	h.writeJSON(w, http.StatusCreated, subs)
+
 }
 
 func (h *Handler) UpdateSubscription(w http.ResponseWriter, r *http.Request) {
@@ -113,7 +132,7 @@ func (h *Handler) UpdateSubscription(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
 		h.log.Error("invalid id", "err", err)
-		http.Error(w, "invalid id", http.StatusBadRequest)
+		h.writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
 	var req struct {
@@ -165,7 +184,7 @@ func (h *Handler) DeleteSubscription(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
 		h.log.Error("invalid id", "err", err)
-		http.Error(w, "invalid id", http.StatusBadRequest)
+		h.writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
 	if err := h.services.DeleteSubscription(r.Context(), id); err != nil {
@@ -207,5 +226,10 @@ func (h *Handler) SumSubscriptions(w http.ResponseWriter, r *http.Request) {
 	resp := struct {
 		Total int `json:"total"`
 	}{Total: sum}
-	json.NewEncoder(w).Encode(resp)
+
+	h.writeJSON(w, http.StatusOK, resp)
+
 }
+
+// проверяем имплиментацию
+var _ SubscriptionService = (*service.SubscriptionSvc)(nil)

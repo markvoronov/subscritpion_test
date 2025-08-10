@@ -6,13 +6,19 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"log/slog"
-	"subscription/config"
+	"subscription/internal/config"
 )
 
 func RunMigrations(cfg *config.Config, logger *slog.Logger) error {
 
-	ps := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s",
-		cfg.DBUser, cfg.DBPassword, cfg.DBHost, cfg.DBPort, cfg.DBName, cfg.DBSSLMode,
+	ps := fmt.Sprintf(
+		"postgres://%s:%s@%s:%s/%s?sslmode=%s",
+		cfg.Database.User,
+		cfg.Database.Password,
+		cfg.Database.Host,
+		cfg.Database.Port,
+		cfg.Database.Name,
+		cfg.Database.SSLMode,
 	)
 
 	m, err := migrate.New(
