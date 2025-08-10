@@ -3,14 +3,14 @@ package service
 import (
 	"context"
 	"log/slog"
-	"subscription/config"
+	"subscription/internal/config"
 	"subscription/internal/model"
 	"subscription/internal/repository/postgres"
 	"time"
 )
 
-// SubscriptionService описывает все кейсы работы подписок
-type SubscriptionService interface {
+// SubscriptionRepository — контракт ХРАНИЛИЩА данных
+type SubscriptionRepository interface {
 	CreateSubscription(ctx context.Context, sub model.Subscription) (model.Subscription, error)
 
 	GetSubscription(ctx context.Context, id int) (model.Subscription, error)
@@ -27,12 +27,12 @@ type SubscriptionService interface {
 }
 
 type SubscriptionSvc struct {
-	repo   SubscriptionService
+	repo   SubscriptionRepository
 	logger *slog.Logger
 	config *config.Config
 }
 
-func NewSubscriptionService(repo SubscriptionService, logger *slog.Logger, config *config.Config) *SubscriptionSvc {
+func NewSubscriptionService(repo SubscriptionRepository, logger *slog.Logger, config *config.Config) *SubscriptionSvc {
 	return &SubscriptionSvc{
 		repo:   repo,
 		logger: logger,
@@ -78,5 +78,9 @@ func (s *SubscriptionSvc) ListSubscriptions(ctx context.Context, userID, service
 	return s.repo.ListSubscriptions(ctx, userID, serviceName)
 }
 
+func (s *SubscriptionSvc) Ping(ctx context.Context) error {
+	return s.repo.Ping(ctx)
+}
+
 // проверяем имплиментацию
-var _ SubscriptionService = (*postgres.Storage)(nil)
+var _ SubscriptionRepository = (*postgres.Storage)(nil)

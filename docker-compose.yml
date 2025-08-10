@@ -8,6 +8,8 @@ services:
       POSTGRES_DB: subscriptions
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
+    # Оставь порт, если хочешь подключаться к БД с хоста (psql/IDE).
+    # Если не нужно — можешь удалить блок ports.
     ports:
       - "5432:5432"
     volumes:
@@ -21,8 +23,12 @@ services:
   app:
     build:
       context: .
+      dockerfile: Dockerfile
       args:
-        CONFIG_FILE: .env
+        # Путь к файлу КОНФИГА внутри репозитория, который надо запечь в образ
+        CONFIG_FILE: ./config/config.yaml
+    # опционально: имя итогового образа
+    image: subscription:latest
     depends_on:
       db:
         condition: service_healthy
