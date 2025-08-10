@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"subscription/internal/config"
 	"subscription/internal/model"
@@ -45,6 +46,12 @@ func (s *SubscriptionSvc) CreateSubscription(ctx context.Context, sub model.Subs
 
 	const op = "internal.service.CreateSubscription"
 	log := s.logger.With(slog.String("op", op))
+
+	if sub.Price < 0 {
+		err := fmt.Errorf("price cannot be negative")
+		log.Error("Can`t create new subscription", slog.String("error", err.Error()))
+		return model.Subscription{}, err
+	}
 
 	sub, err := s.repo.CreateSubscription(ctx, sub)
 	if err != nil {
