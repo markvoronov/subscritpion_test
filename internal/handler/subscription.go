@@ -123,7 +123,7 @@ func (h *Handler) ListSubscriptions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.writeJSON(w, http.StatusCreated, subs)
+	h.writeJSON(w, http.StatusOK, subs)
 
 }
 
