@@ -53,7 +53,7 @@ func (h *Handler) CreateSubscription(w http.ResponseWriter, r *http.Request) {
 
 	startDate, err := time.Parse("01-2006", req.StartDate)
 	if err != nil {
-		h.log.Error("invalid start_date", "err", err)
+		h.log.Error("invalid start_date", "value", req.StartDate, "err", err)
 		h.writeError(w, http.StatusBadRequest, "invalid start_date format")
 		return
 	}
@@ -62,8 +62,15 @@ func (h *Handler) CreateSubscription(w http.ResponseWriter, r *http.Request) {
 	if req.EndDate != "" {
 		t, err := time.Parse("01-2006", req.EndDate)
 		if err != nil {
-			h.log.Error("invalid end_date", "err", err)
-			http.Error(w, "invalid end_date format", http.StatusBadRequest)
+			h.log.Error("invalid end_date", "value", req.EndDate, "err", err)
+			h.writeError(w, http.StatusBadRequest, "invalid end_date format")
+			return
+		}
+
+		// Проверка: end_date >= start_date
+		if t.Before(startDate) {
+			h.log.Error("end_date before start_date", "start_date", startDate, "end_date", t)
+			h.writeError(w, http.StatusBadRequest, "end_date cannot be before start_date")
 			return
 		}
 		endDate = &t
@@ -79,7 +86,7 @@ func (h *Handler) CreateSubscription(w http.ResponseWriter, r *http.Request) {
 	s, err = h.services.CreateSubscription(r.Context(), s)
 	if err != nil {
 		h.log.Error("create subscription error", "err", err)
-		http.Error(w, "could not create subscription", http.StatusInternalServerError)
+		h.writeError(w, http.StatusInternalServerError, "could not create subscription")
 		return
 	}
 
@@ -92,22 +99,22 @@ func (h *Handler) GetSubscription(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
 		h.log.Error("invalid id", "err", err)
-		http.Error(w, "invalid id", http.StatusBadRequest)
+		h.writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
 
 	sub, err := h.services.GetSubscription(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			http.Error(w, "not found", http.StatusNotFound)
+			h.writeError(w, http.StatusNotFound, "not found")
 		} else {
 			h.log.Error("get error", "err", err)
-			http.Error(w, "server error", http.StatusInternalServerError)
+			h.writeError(w, http.StatusInternalServerError, "server error")
 		}
 		return
 	}
 
-	h.writeJSON(w, http.StatusCreated, sub)
+	h.writeJSON(w, http.StatusOK, sub)
 
 }
 
@@ -119,7 +126,7 @@ func (h *Handler) ListSubscriptions(w http.ResponseWriter, r *http.Request) {
 	subs, err := h.services.ListSubscriptions(r.Context(), userID, serviceName)
 	if err != nil {
 		h.log.Error("list error", "err", err)
-		http.Error(w, "server error", http.StatusInternalServerError)
+		h.writeError(w, http.StatusInternalServerError, "server error")
 		return
 	}
 
@@ -144,21 +151,26 @@ func (h *Handler) UpdateSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.log.Error("invalid request", "err", err)
-		http.Error(w, "invalid request", http.StatusBadRequest)
+		h.writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
 	startDate, err := time.Parse("01-2006", req.StartDate)
 	if err != nil {
-		h.log.Error("invalid start_date", "err", err)
-		http.Error(w, "invalid start_date format", http.StatusBadRequest)
+		h.log.Error("invalid start_date", "value", req.StartDate, "err", err)
+		h.writeError(w, http.StatusBadRequest, "invalid start_date format")
 		return
 	}
 	var endDate *time.Time
 	if req.EndDate != "" {
 		t, err := time.Parse("01-2006", req.EndDate)
 		if err != nil {
-			h.log.Error("invalid end_date", "err", err)
-			http.Error(w, "invalid end_date format", http.StatusBadRequest)
+			h.log.Error("invalid end_date", "value", req.EndDate, "err", err)
+			h.writeError(w, http.StatusBadRequest, "invalid end_date format")
+			return
+		}
+		if t.Before(startDate) {
+			h.log.Error("end_date before start_date", "start_date", startDate, "end_date", t)
+			h.writeError(w, http.StatusBadRequest, "end_date cannot be before start_date")
 			return
 		}
 		endDate = &t
@@ -173,7 +185,7 @@ func (h *Handler) UpdateSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.services.UpdateSubscription(r.Context(), sub); err != nil {
 		h.log.Error("update error", "err", err)
-		http.Error(w, "server error", http.StatusInternalServerError)
+		h.writeError(w, http.StatusInternalServerError, "server error")
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -189,7 +201,7 @@ func (h *Handler) DeleteSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.services.DeleteSubscription(r.Context(), id); err != nil {
 		h.log.Error("delete error", "err", err)
-		http.Error(w, "server error", http.StatusInternalServerError)
+		h.writeError(w, http.StatusInternalServerError, "server error")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -201,26 +213,26 @@ func (h *Handler) SumSubscriptions(w http.ResponseWriter, r *http.Request) {
 	fromStr := r.URL.Query().Get("from")
 	toStr := r.URL.Query().Get("to")
 	if fromStr == "" || toStr == "" {
-		http.Error(w, "from/to required", http.StatusBadRequest)
+		h.writeError(w, http.StatusBadRequest, "from/to required")
 		return
 	}
 	startPeriod, err := time.Parse("01-2006", fromStr)
 	if err != nil {
 		h.log.Error("invalid from", "err", err)
-		http.Error(w, "invalid from format", http.StatusBadRequest)
+		h.writeError(w, http.StatusBadRequest, "invalid from format")
 		return
 	}
 	endPeriod, err := time.Parse("01-2006", toStr)
 	if err != nil {
 		h.log.Error("invalid to", "err", err)
-		http.Error(w, "invalid to format", http.StatusBadRequest)
+		h.writeError(w, http.StatusBadRequest, "invalid to format")
 		return
 	}
 
 	sum, err := h.services.Sum(r.Context(), userID, serviceName, startPeriod, endPeriod)
 	if err != nil {
 		h.log.Error("sum error", "err", err)
-		http.Error(w, "server error", http.StatusInternalServerError)
+		h.writeError(w, http.StatusInternalServerError, "server error")
 		return
 	}
 	resp := struct {
